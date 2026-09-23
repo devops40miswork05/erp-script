@@ -1,0 +1,10 @@
+<!-- PAGE: Profile -->
+<section class="page" id="page-profile"></section>
+<script>
+Pages.profile = { title:'My profile', render:function(el){
+  var u=S.user;
+  el.innerHTML='<div class="panel"><div class="big-av grad">'+esc((u.name||u.id).charAt(0).toUpperCase())+'</div>'+
+    '<div class="profile-grid"><span>Name</span><b>'+esc(u.name)+'</b><span>User ID</span><b>'+esc(u.id)+'</b><span>Role</span><b>'+esc(u.role)+'</b><span>IMS access</span><b>'+(u.ims?'Yes':'No')+'</b><span>Company</span><b>'+esc(CONFIG.companyName)+'</b></div></div>'+
+    '<div class="panel"><div class="row"><div><b>Change password</b><p>Passwords are managed by the admin in the LOGIN PAGE sheet.</p></div></div></div>';
+}};
+</script>
