@@ -1,0 +1,150 @@
+<!-- PAGE: Distributor IMS — paginated table with resizable columns and per-column search (server-side). -->
+<section class="page" id="page-ims"></section>
+<script>
+Pages.ims = {
+  title: 'Distributor IMS',
+  render: function (el) {
+    if (!S.ims || !S.ims.items) {
+      el.innerHTML = '<div class="loading">Opening your data…</div>';
+      return;
+    }
+    if (!S.ims.allowed) { el.innerHTML = noAccess(); return; }
+
+    var items = S.ims.items || [];
+    // NOTE: server-side filters already applied — no need to call applyFilters locally
+    var list = items;
+    var m = S.ims.meta || {};
+
+    var today = new Date();
+    var todayStr = today.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    var total = S.ims.total || items.length;
+    var page = S.ims.page || 1;
+    var pages = S.ims.pages || 1;
+    var startIdx = (page - 1) * (S.ims.pageSize || 100);
+
+    // Define columns with their keys (data keys) and labels
+        var columns = [
+      { key: 'sno',  label: 'S.No',         className: 'i',    searchable: false, width: '3rem' },
+      { key: 'cat',  label: 'CATEGORY',     className: 'i',    searchable: true,  width: '8rem' },
+      { key: 'code', label: 'ITEM CODE',    className: 'i',    searchable: true,  width: '7rem' },
+      { key: 'name', label: 'ITEM NAME',    className: 'i',    searchable: true,  width: 'auto' },
+      { key: 'sku',  label: 'SKU',          className: 'i',    searchable: true,  width: '5rem' },
+      { key: 'lead', label: 'Lead Time',    className: 'lead', searchable: false, width: '5rem' },
+      { key: 'max',  label: 'MAX LAVEL',    className: 'i',    searchable: false, width: '5rem' },
+      { key: 'rate', label: 'RATE',         className: 'i',    searchable: true,  numSearch: true, width: '5rem' },
+      { key: 'open', label: 'OPENING STOCK',className: '',     searchable: false, width: '7rem' },
+      { key: 'today',label: 'TODAY STOCK',  className: '',     searchable: false, width: '7rem' },
+      { key: 'close',label: 'CLOSING STOCK',className: '',     searchable: false, width: '7rem' },
+      { key: 'inward',label:'INWARD',       className: '',     searchable: false, width: '5rem' },
+      { key: 'outward',label:'OUTWARD',     className: '',     searchable: false, width: '5rem' },
+      { key: 'graph',label: 'GRAPHS',       className: '',     searchable: false, width: '5rem' },
+      { key: 'pct',  label: '% STOCK',      className: '',     searchable: false, width: '5rem' }
+    ];
+
+    var h =
+      '<div class="ims-bar">' +
+        '<div class="legend">' +
+          '<div style="background:#FFF200;color:#111">33% &gt; 66%=&lt;</div>' +
+          '<div style="background:#E53935;color:#fff">33%&lt;=</div>' +
+          '<div style="background:#2E7D32;color:#fff">66% &gt; 100%=&lt;</div>' +
+          '<div style="background:#1F3FA8;color:#fff">100%=</div>' +
+        '</div>' +
+        '<div class="ims-cards">' +
+          '<div class="imscard">' +
+            '<span>Opening Date</span><b>' + esc(m.openDate || '—') + '</b>' +
+          '</div>' +
+          '<div class="imscard">' +
+            '<span>Closing Date</span><b>' + todayStr + '</b>' +
+          '</div>' +
+          '<div class="imscard accent">' +
+            '<span>Total Items</span><b>' + fmt(total) + '</b>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tools">' +
+          '<input class="in plain" id="q" placeholder="Search all items" value="' + esc(S.q) + '" oninput="S.q=this.value.toLowerCase();loadIMSPage(1)">' +
+          // '<span class="sync"><i></i>' + esc(S.ims.synced) + '</span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="panel"><div class="tw ims-scroll" id="imsScroll"><table class="ims" id="imsTable" style="min-width:0"><thead>' +
+        '<tr class="ims-hd">';
+
+    // Header row with search icons + resize handles
+    columns.forEach(function (col) {
+      var onclickFn = col.numSearch ? 'openNumSearch' : 'openColSearch';
+      h += '<th class="' + col.className + '" data-col-key="' + col.key + '" style="width:' + col.width + '">' +
+        '<span class="th-label">' + col.label + '</span>' +
+        (col.searchable
+          ? '<button class="col-search" data-col="' + col.key + '" onclick="' + onclickFn + '(event,\'' + col.key + '\')" title="Search ' + col.label + '">' +
+              '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>' +
+            '</button>'
+          : '') +
+        '<span class="col-resizer" data-col="' + col.key + '" onmousedown="startResize(event,\'' + col.key + '\')"></span>' +
+      '</th>';
+    });
+
+    h += '</tr></thead><tbody>';
+
+    if (!list.length) {
+      h += '<tr><td colspan="' + columns.length + '"><div class="empty"><b>Nothing here</b>' +
+        (S.q || hasActiveColFilter() ? 'No item matches your filter.' : 'No data on this page.') +
+        '</div></td></tr>';
+    }
+
+        list.forEach(function (i, idx) {
+      h += '<tr>' +
+        '<td class="num" style="color:var(--muted);font-weight:600">' + (startIdx + idx + 1) + '</td>' +
+        '<td class="c-cat">'  + esc(i.cat)   + '</td>' +
+        '<td class="c-code">' + esc(i.code)  + '</td>' +
+        '<td class="c-name">' + esc(i.name)  + '</td>' +
+        '<td class="num">'    + esc(i.sku)   + '</td>' +
+        '<td class="num c-lead">' + (i.lead === '' ? '' : esc(i.lead)) + '</td>' +
+        '<td class="num">'    + (i.maxRaw  === '' ? '' : fmt(i.max))   + '</td>' +
+        '<td class="num">'    + (i.rateRaw === '' ? '' : fmt(i.rate))  + '</td>' +
+        '<td class="num">'    + (i.open     === '' ? '' : esc(i.open))    + '</td>' +
+        '<td class="num">'    + (i.today    === '' ? '' : esc(i.today))   + '</td>' +
+        '<td class="num">'    + (i.close    === '' ? '' : esc(i.close))   + '</td>' +
+        '<td class="num">'    + (i.inward   === '' ? '' : esc(i.inward))  + '</td>' +
+        '<td class="num">'    + (i.outward  === '' ? '' : esc(i.outward)) + '</td>' +
+        '<td class="ims-graph"><div class="bar" style="width:0%"></div></td>' +
+        '<td class="ims-pct" style="background:#D9DCE1;color:#555">—</td>' +
+      '</tr>';
+    });
+
+    h += '</tbody></table></div>';
+
+        h += '<div class="pagination">' +
+      '<span class="ims-copyright">Copyright © 2026 Designed & Developed by MIS Work</span>' +
+      '<button class="pg" onclick="gotoPage(1)" ' + (page === 1 ? 'disabled' : '') + '>« First</button>' +
+      '<button class="pg" onclick="gotoPage(' + (page - 1) + ')" ' + (page === 1 ? 'disabled' : '') + '>‹ Prev</button>' +
+      '<span class="pg-info">Page <b>' + page + '</b> of <b>' + pages + '</b> · ' + fmt(total) + ' items</span>' +
+      '<button class="pg" onclick="gotoPage(' + (page + 1) + ')" ' + (page === pages ? 'disabled' : '') + '>Next ›</button>' +
+      '<button class="pg" onclick="gotoPage(' + pages + ')" ' + (page === pages ? 'disabled' : '') + '>Last »</button>' +
+      '<span class="pg-jump">Go to <input class="pg-input" id="pgInput" type="number" min="1" max="' + pages + '" value="' + page + '" onkeydown="if(event.key===\'Enter\')gotoPage(parseInt(this.value))"> ' +
+      '<button class="pg" onclick="gotoPage(parseInt(document.getElementById(\'pgInput\').value))">Go</button></span>' +
+    '</div>';
+
+        h += '</div>';
+
+    // footer
+    // h += '<div class="ims-footer"><span>Copyright © 2026 Designed & Developed by MIS Work</span></div>';
+
+    el.innerHTML = h;
+    keepFocus();
+    restoreColumnWidths();
+    // restore badges after render
+    ['cat','code','name','sku'].forEach(function(k){ if (typeof updateColBadge === 'function') updateColBadge(k); });
+    if (typeof updateNumBadge === 'function') updateNumBadge('rate');
+  }
+};
+
+/* helper — check if any column filter is active */
+function hasActiveColFilter() {
+  var anySet = typeof selectedColValues === 'object' && ['cat','code','name','sku'].some(function(k){
+    return selectedColValues[k] && Object.keys(selectedColValues[k]).length > 0;
+  });
+  var anyNum = typeof numFilters === 'object' && numFilters && numFilters.rate;
+  return anySet || anyNum;
+}
+</script>
