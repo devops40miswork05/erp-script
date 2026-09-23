@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="<?= config.defaultTheme ?>" data-mode="light" data-font="m">
+<head>
+<meta charset="utf-8">
+<title><?= config.companyName ?> · ERP</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<?!= include('Styles') ?>
+</head>
+<body>
+<?!= include('Login') ?>
+<?!= include('Layout') ?>
+<script>var Pages = {}; window.CONFIG = <?!= JSON.stringify(config) ?>;</script>
+
+<!-- ERP pages: one file each. Add a new page = new Page_X.html + one line here + one nav button in Layout.html -->
+<?!= include('Page_Dashboard') ?>
+<?!= include('Page_IMS') ?>
+<?!= include('Page_Profile') ?>
+<?!= include('Page_Appearance') ?>
+
+<div class="toast" id="toast"></div>
+<?!= include('Scripts') ?>
+</body>
+</html>
