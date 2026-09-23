@@ -33,11 +33,11 @@ Pages.ims = {
       { key: 'lead', label: 'Lead Time',    className: 'lead', searchable: false, width: '5rem' },
       { key: 'max',  label: 'MAX LAVEL',    className: 'i',    searchable: false, width: '5rem' },
       { key: 'rate', label: 'RATE',         className: 'i',    searchable: true,  numSearch: true, width: '5rem' },
-      { key: 'open', label: 'OPENING STOCK',className: '',     searchable: false, width: '7rem' },
-      { key: 'today',label: 'TODAY STOCK',  className: '',     searchable: false, width: '7rem' },
-      { key: 'close',label: 'CLOSING STOCK',className: '',     searchable: false, width: '7rem' },
-      { key: 'inward',label:'INWARD',       className: '',     searchable: false, width: '5rem' },
-      { key: 'outward',label:'OUTWARD',     className: '',     searchable: false, width: '5rem' },
+      { key: 'open', label: 'OPENING STOCK',className: '',     searchable: true,  numSearch: true, width: '7rem' },
+      { key: 'today',label: 'TODAY STOCK',  className: '',     searchable: true,  numSearch: true, width: '7rem' },
+      { key: 'close',label: 'CLOSING STOCK',className: '',     searchable: true,  numSearch: true, width: '7rem' },
+      { key: 'inward',label:'INWARD',       className: '',     searchable: true,  numSearch: true, width: '5rem' },
+      { key: 'outward',label:'OUTWARD',     className: '',     searchable: true,  numSearch: true, width: '5rem' },
       { key: 'graph',label: 'GRAPHS',       className: '',     searchable: false, width: '5rem' },
       { key: 'pct',  label: '% STOCK',      className: '',     searchable: false, width: '5rem' }
     ];
@@ -135,7 +135,8 @@ Pages.ims = {
     restoreColumnWidths();
     // restore badges after render
     ['cat','code','name','sku'].forEach(function(k){ if (typeof updateColBadge === 'function') updateColBadge(k); });
-    if (typeof updateNumBadge === 'function') updateNumBadge('rate');
+    // restore numeric filter badges for all numeric columns
+    ['rate','open','today','close','inward','outward'].forEach(function(k){ if (typeof updateNumBadge === 'function') updateNumBadge(k); });
   }
 };
 
@@ -144,7 +145,9 @@ function hasActiveColFilter() {
   var anySet = typeof selectedColValues === 'object' && ['cat','code','name','sku'].some(function(k){
     return selectedColValues[k] && Object.keys(selectedColValues[k]).length > 0;
   });
-  var anyNum = typeof numFilters === 'object' && numFilters && numFilters.rate;
+  var anyNum = typeof numFilters === 'object' && numFilters && ['rate','open','today','close','inward','outward'].some(function(k){
+    return numFilters[k];
+  });
   return anySet || anyNum;
 }
 </script>

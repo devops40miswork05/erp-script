@@ -322,7 +322,12 @@ function partyKeyFor(user) {
  *     code: { "IC027": 1, ... },
  *     name: { "...": 1 },
  *     sku:  { "801": 1, ... },
- *     rate: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 }
+ *     rate: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 },
+ *     open: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 },
+ *     today: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 },
+ *     close: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 },
+ *     inward: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 },
+ *     outward: { op: "eq"|"gt"|"lt"|"bt"|"blank"|"nblank", v1, v2 }
  *   }
  */
 function getIMSPage(token, page, pageSize, since, filters) {
@@ -378,6 +383,30 @@ function getIMSPage(token, page, pageSize, since, filters) {
   var setMap = { cat: 1, code: 2, name: 3, sku: 4 };
   var q = (filters.q || '').toString().toLowerCase().trim();
   var rateF = filters.rate || null;
+  var openF = filters.open || null;
+  var todayF = filters.today || null;
+  var closeF = filters.close || null;
+  var inwardF = filters.inward || null;
+  var outwardF = filters.outward || null;
+
+  // Helper function for numeric filtering
+  function applyNumericFilter(filterObj, colIndex, row) {
+    if (!filterObj || !filterObj.op) return true;
+    var raw = String(row[colIndex] || '').trim();
+    var nv = raw === '' ? null : Number(raw);
+    var has = nv !== null && !isNaN(nv);
+    if (filterObj.op === 'blank') { if (has) return false; }
+    else if (filterObj.op === 'nblank') { if (!has) return false; }
+    else if (filterObj.op === 'eq') { if (!has || nv !== Number(filterObj.v1)) return false; }
+    else if (filterObj.op === 'gt') { if (!has || nv <= Number(filterObj.v1)) return false; }
+    else if (filterObj.op === 'lt') { if (!has || nv >= Number(filterObj.v1)) return false; }
+    else if (filterObj.op === 'bt') {
+      if (!has) return false;
+      if (filterObj.v1 != null && filterObj.v1 !== '' && nv < Number(filterObj.v1)) return false;
+      if (filterObj.v2 != null && filterObj.v2 !== '' && nv > Number(filterObj.v2)) return false;
+    }
+    return true;
+  }
 
   var filtered = all.slice(1).filter(function (r) {
     if (q) {
@@ -390,21 +419,13 @@ function getIMSPage(token, page, pageSize, since, filters) {
       var val = String(r[setMap[key]] || '');
       if (!set[val]) return false;
     }
-    if (rateF && rateF.op) {
-      var raw = String(r[6] || '').trim();
-      var nv = raw === '' ? null : Number(raw);
-      var has = nv !== null && !isNaN(nv);
-      if (rateF.op === 'blank') { if (has) return false; }
-      else if (rateF.op === 'nblank') { if (!has) return false; }
-      else if (rateF.op === 'eq') { if (!has || nv !== Number(rateF.v1)) return false; }
-      else if (rateF.op === 'gt') { if (!has || nv <= Number(rateF.v1)) return false; }
-      else if (rateF.op === 'lt') { if (!has || nv >= Number(rateF.v1)) return false; }
-      else if (rateF.op === 'bt') {
-        if (!has) return false;
-        if (rateF.v1 != null && rateF.v1 !== '' && nv < Number(rateF.v1)) return false;
-        if (rateF.v2 != null && rateF.v2 !== '' && nv > Number(rateF.v2)) return false;
-      }
-    }
+    // Apply numeric filters
+    if (!applyNumericFilter(rateF, 6, r)) return false;      // RATE at index 6
+    if (!applyNumericFilter(openF, 7, r)) return false;      // OPENING STOCK at index 7
+    if (!applyNumericFilter(todayF, 8, r)) return false;     // TODAY STOCK at index 8
+    if (!applyNumericFilter(closeF, 9, r)) return false;     // CLOSING STOCK at index 9
+    if (!applyNumericFilter(inwardF, 10, r)) return false;   // INWARD at index 10
+    if (!applyNumericFilter(outwardF, 11, r)) return false;  // OUTWARD at index 11
     return true;
   });
 

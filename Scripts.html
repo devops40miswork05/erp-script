@@ -15,7 +15,7 @@
   // column-search state
   var colValuesCache = {};        // { colKey: [values] }
   var selectedColValues = {};     // { colKey: { value: true } }
-  var numFilters = { rate: null };
+  var numFilters = { rate: null, open: null, today: null, close: null, inward: null, outward: null };
   window.onerror = function(m){ var t = document.getElementById('toast'); if(t){ t.textContent = 'Error: ' + m; t.classList.add('show'); } };
   function $(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]}); }
@@ -201,7 +201,7 @@
     S.f = {cat:'', code:'', name:'', sku:''};
     colValuesCache = {};
     selectedColValues = {};
-    numFilters = { rate: null };
+    numFilters = { rate: null, open: null, today: null, close: null, inward: null, outward: null };
     $('app').classList.add('hide');
     $('login').classList.remove('hide');
     $('upw').value = '';
@@ -227,7 +227,12 @@
       code: (S.f.code && S.f.code.__set) ? S.f.code.__set : null,
       name: (S.f.name && S.f.name.__set) ? S.f.name.__set : null,
       sku:  (S.f.sku  && S.f.sku.__set)  ? S.f.sku.__set  : null,
-      rate: numFilters.rate || null
+      rate: numFilters.rate || null,
+      open: numFilters.open || null,
+      today: numFilters.today || null,
+      close: numFilters.close || null,
+      inward: numFilters.inward || null,
+      outward: numFilters.outward || null
     };
   }
 
@@ -519,6 +524,7 @@
 
         // restore badges
         ['cat','code','name','sku'].forEach(function(k){ updateColBadge(k); });
+        ['rate','open','today','close','inward','outward'].forEach(function(k){ updateNumBadge(k); });
       })
       .withFailureHandler(function(e){
         document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
@@ -671,7 +677,7 @@
         }
 
         ['cat','code','name','sku'].forEach(function(k){ updateColBadge(k); });
-        updateNumBadge('rate');
+        ['rate','open','today','close','inward','outward'].forEach(function(k){ updateNumBadge(k); });
       })
       .withFailureHandler(function(e){
         document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
