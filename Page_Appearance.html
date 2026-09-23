@@ -1,0 +1,28 @@
+<!-- PAGE: Appearance — any colour for the whole app + day/night + text size. Saved per user on the server. -->
+<section class="page" id="page-appearance">
+  <div class="panel">
+    <div class="ph"><h3>App colour</h3></div>
+    <div class="row">
+      <div><b>Pick any colour</b><p>Sidebar, buttons, highlights — the whole app follows this colour.</p></div>
+      <label class="picker"><input type="color" id="customColor" value="#c4162f" oninput="setCustom(this.value)"><span>Choose</span></label>
+    </div>
+    <div style="padding:1rem 1.2rem 1.2rem" class="themes">
+      <button class="theme" data-t="ruby"   onclick="setTheme('ruby')"><div class="sw" style="background:linear-gradient(135deg,#7A0C22,#F0642F)"></div><b>Ruby</b></button>
+      <button class="theme" data-t="ocean"  onclick="setTheme('ocean')"><div class="sw" style="background:linear-gradient(135deg,#0B2E5B,#2AA7E8)"></div><b>Ocean</b></button>
+      <button class="theme" data-t="forest" onclick="setTheme('forest')"><div class="sw" style="background:linear-gradient(135deg,#0E3D2A,#5DBE7A)"></div><b>Forest</b></button>
+      <button class="theme" data-t="violet" onclick="setTheme('violet')"><div class="sw" style="background:linear-gradient(135deg,#2E1466,#B36BE0)"></div><b>Violet</b></button>
+      <button class="theme" data-t="amber"  onclick="setTheme('amber')"><div class="sw" style="background:linear-gradient(135deg,#6B3A05,#F5A623)"></div><b>Amber</b></button>
+      <button class="theme" data-t="slate"  onclick="setTheme('slate')"><div class="sw" style="background:linear-gradient(135deg,#1F2937,#7C8797)"></div><b>Slate</b></button>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="row"><div><b>Day / night mode</b><p>Light or dark background.</p></div>
+      <div class="seg"><button onclick="setMode('light')">Day</button><button onclick="setMode('dark')">Night</button></div></div>
+    <div class="row"><div><b>Text size</b></div>
+      <div class="seg"><button onclick="setFont('s')">A−</button><button onclick="setFont('m')">A</button><button onclick="setFont('l')">A+</button></div></div>
+  </div>
+  <p style="color:var(--muted);font-size:.8rem">Your choice is saved to your account — every time you log in, from any device, you get the same look.</p>
+</section>
+<script>
+Pages.appearance = { title:'Appearance', render:function(el){ applyPrefs(S.prefs,false) } };
+</script>
