@@ -1,0 +1,754 @@
+<script>
+  /* ===== Shared shell script: session, theme, router, IMS pagination, refresh timer, column search ===== */
+  var S = {
+    token: null, user: null,
+    prefs: { theme: CONFIG.defaultTheme, mode: 'light', font: 'm' },
+    ims: null,
+    imsPage: 1,
+    page: 'dashboard',
+    q: '', cat: 'All',
+    f: { cat: '', code: '', name: '', sku: '' }
+  };
+  var POLL_MS = 5 * 60 * 1000, pollTimer = null;
+  var refreshTimer = null, lastRefreshAt = Date.now();
+
+  // column-search state
+  var colValuesCache = {};        // { colKey: [values] }
+  var selectedColValues = {};     // { colKey: { value: true } }
+  var numFilters = { rate: null };
+  window.onerror = function(m){ var t = document.getElementById('toast'); if(t){ t.textContent = 'Error: ' + m; t.classList.add('show'); } };
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]}); }
+  function fmt(n){ return Number(n||0).toLocaleString('en-IN'); }
+  function num(v){ var n = Number(String(v == null ? '' : v).replace(/[,₹\s]/g, '')); return isNaN(n) ? 0 : n; }
+  function toast(t){ var e=$('toast'); e.textContent=t; e.classList.add('show'); setTimeout(function(){e.classList.remove('show')},2600); }
+  function lmsg(t,cls){ var e=$('lmsg'); e.className='msg '+(cls||''); e.textContent=t; }
+  function togglePw(b){ var p=$('upw'); p.type=p.type==='password'?'text':'password'; b.style.color=p.type==='password'?'':'var(--a2)'; }
+  function toggleMenu(){ $('umenu').classList.toggle('open'); }
+  document.addEventListener('click', function(e){ if(!e.target.closest('.user')) $('umenu').classList.remove('open'); });
+
+  /* ---------- appearance ---------- */
+  function hexToHsl(hex){
+    var r=parseInt(hex.substr(1,2),16)/255,g=parseInt(hex.substr(3,2),16)/255,b=parseInt(hex.substr(5,2),16)/255,
+        mx=Math.max(r,g,b),mn=Math.min(r,g,b),h=0,s=0,l=(mx+mn)/2;
+    if(mx!==mn){var d=mx-mn;s=l>.5?d/(2-mx-mn):d/(mx+mn);h=mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4;h*=60}
+    return [h,s*100,l*100];
+  }
+  function applyCustom(hex){
+    var c=hexToHsl(hex), h=Math.round(c[0]), s=Math.round(Math.max(35,c[1])), st=document.documentElement.style;
+    st.setProperty('--a2','hsl('+h+','+s+'%,'+Math.min(45,Math.max(30,Math.round(c[2])))+'%)');
+    st.setProperty('--a1','hsl('+h+','+s+'%,22%)');
+    st.setProperty('--a3','hsl('+h+','+Math.min(95,s+15)+'%,60%)');
+    st.setProperty('--side','hsl('+h+','+Math.min(60,s)+'%,11%)');
+    st.setProperty('--a-soft','hsl('+h+','+s+'%,'+(S.prefs.mode==='dark'?18:93)+'%)');
+  }
+  function clearCustom(){ ['--a1','--a2','--a3','--side','--a-soft'].forEach(function(v){ document.documentElement.style.removeProperty(v); }); }
+  function applyPrefs(p, save){
+    S.prefs=p;
+    var h=document.documentElement;
+    var custom=/^custom:#[0-9a-f]{6}$/i.test(p.theme);
+    h.dataset.theme=custom?'ruby':p.theme;
+    h.dataset.mode=p.mode;
+    h.dataset.font=p.font;
+    if(custom) applyCustom(p.theme.slice(7)); else clearCustom();
+
+    var pick=$('customColor'); if(pick){ pick.value = custom ? p.theme.slice(7) : '#c4162f'; }
+    document.querySelectorAll('.seg [data-f]').forEach(function(b){ b.classList.toggle('on', b.dataset.f === p.font); });
+    var im=$('ico-moon'), is=$('ico-sun');
+    if(im) im.classList.toggle('hide', p.mode === 'dark');
+    if(is) is.classList.toggle('hide', p.mode !== 'dark');
+    document.querySelectorAll('.theme').forEach(function(b){ b.classList.toggle('on', b.dataset.t === p.theme); });
+
+    try{ localStorage.setItem('erp_prefs', JSON.stringify(p)); }catch(e){}
+    if(save && S.token) google.script.run.savePrefs(S.token, p);
+  }
+  function setTheme(t){ applyPrefs({theme:t, mode:S.prefs.mode, font:S.prefs.font}, true); }
+  function setCustom(hex){ setTheme('custom:'+hex.toLowerCase()); }
+  function setFont(f){ applyPrefs({theme:S.prefs.theme, mode:S.prefs.mode, font:f}, true); }
+  function toggleMode(){ applyPrefs({theme:S.prefs.theme, mode:S.prefs.mode==='dark'?'light':'dark', font:S.prefs.font}, true); }
+  function setMode(m){ applyPrefs({theme:S.prefs.theme, mode:m, font:S.prefs.font}, true); }
+
+  /* ---------- sidebar toggle ---------- */
+  function toggleSidebar() {
+    var app = document.getElementById('app');
+    if (!app) return;
+    app.classList.toggle('side-hidden');
+    try {
+      localStorage.setItem('sidebar_hidden', app.classList.contains('side-hidden') ? '1' : '0');
+    } catch(e) {}
+  }
+
+    /* ---------- refresh button + sync timer ---------- */
+  var SYNC_INTERVAL_SEC = 300;   // 5 minutes
+
+  function refreshIMS() {
+    lastRefreshAt = Date.now();
+    updateRefreshLabel();
+    if (S.user && S.user.ims) loadIMSPage(S.imsPage || 1);
+  }
+
+    function updateRefreshLabel() {
+    var lbl = document.getElementById('refreshLbl');
+    var nextLbl = document.getElementById('nextSyncLbl');
+    if (!lbl) return;
+
+    // last sync — date + time
+    var d = new Date(lastRefreshAt);
+    var dd = d.getDate();
+    var mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    var yr = d.getFullYear();
+    var hh = d.getHours();
+    var mm = d.getMinutes();
+    var ampm = hh >= 12 ? 'PM' : 'AM';
+    hh = hh % 12; if (hh === 0) hh = 12;
+    var timeStr = dd + ' ' + mon + ' ' + yr + ', ' +
+                  (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm + ' ' + ampm;
+
+    lbl.textContent = 'Last sync at ' + timeStr;
+
+    // next sync countdown (5 min)
+    if (nextLbl) {
+      var s = Math.max(0, Math.floor((Date.now() - lastRefreshAt) / 1000));
+      var remain = SYNC_INTERVAL_SEC - (s % SYNC_INTERVAL_SEC);
+      if (remain <= 0) remain = SYNC_INTERVAL_SEC;
+      var rm = Math.floor(remain / 60);
+      var rs = remain % 60;
+      nextLbl.textContent = 'Next in ' + rm + 'm ' + (rs < 10 ? '0' : '') + rs + 's';
+    }
+  }
+
+  function startRefreshTimer() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    updateRefreshLabel();
+    refreshTimer = setInterval(updateRefreshLabel, 1000);
+  }
+
+  /* ---------- boot ---------- */
+  (function init(){
+    var lc = $('l-company'), lc2 = $('l-company2'), sc = $('s-company');
+    if(lc) lc.textContent = CONFIG.companyName;
+    if(lc2) lc2.textContent = CONFIG.companyName;
+    if(sc) sc.textContent = CONFIG.companyName;
+    var lt = $('l-tag'), st = $('s-tag');
+    if(lt) lt.textContent = CONFIG.tagline;
+    if(st) st.textContent = CONFIG.tagline;
+    var lv = $('l-ver'); if(lv) lv.textContent = CONFIG.version || '';
+
+    var box = $('pages');
+    if (box) document.querySelectorAll('.page').forEach(function(p){ box.appendChild(p); });
+
+    var p = null; try { p = JSON.parse(localStorage.getItem('erp_prefs')); } catch(e){}
+    applyPrefs(p || S.prefs, false);
+
+    try {
+      if (localStorage.getItem('sidebar_hidden') === '1') {
+        var app = document.getElementById('app');
+        if (app) app.classList.add('side-hidden');
+      }
+    } catch(e) {}
+
+    startRefreshTimer();
+  })();
+
+  /* ---------- auth ---------- */
+  function doLogin(){
+    var id = $('uid').value.trim(), pw = $('upw').value;
+    if(!id || !pw){ lmsg('Enter both ID and password.','err'); return; }
+    var b = $('lbtn'); b.disabled = true; b.textContent = 'Signing in…'; lmsg('');
+    google.script.run.withSuccessHandler(function(r){
+      b.disabled = false; b.textContent = 'Sign in';
+      if(!r.ok){ lmsg(r.error,'err'); return; }
+      S.token = r.token; S.user = r.user; applyPrefs(r.prefs, false);
+      enterApp();
+    }).withFailureHandler(function(e){
+      b.disabled = false; b.textContent = 'Sign in'; lmsg(e.message,'err');
+    }).login(id, pw);
+  }
+
+  function enterApp(){
+    $('login').classList.add('hide');
+    $('app').classList.remove('hide');
+    $('wname').textContent = S.user.name;
+    $('wid').textContent = S.user.role + ' · ' + S.user.id;
+    $('av').textContent = (S.user.name || S.user.id).charAt(0).toUpperCase();
+
+    var perms = S.user.perms || {};
+    document.querySelectorAll('.nav[data-perm]').forEach(function(n){ n.classList.toggle('hide', !perms[n.dataset.perm]); });
+
+    if (S.user.ims) loadIMSPage(1);
+
+    go(S.user.ims ? 'ims' : 'dashboard');
+
+    lastRefreshAt = Date.now();
+    updateRefreshLabel();
+    startRefreshTimer();
+
+    clearInterval(pollTimer);
+    pollTimer = setInterval(function(){
+      if (S.user && S.user.ims) {
+        loadIMSPage(S.imsPage);
+        lastRefreshAt = Date.now();
+        updateRefreshLabel();
+      }
+    }, POLL_MS);
+  }
+
+  function doLogout(){
+    if(S.token) google.script.run.logout(S.token);
+    clearInterval(pollTimer);
+    if (refreshTimer) clearInterval(refreshTimer);
+    S.token = null; S.user = null; S.ims = null; S.imsPage = 1; S.q = '';
+    S.f = {cat:'', code:'', name:'', sku:''};
+    colValuesCache = {};
+    selectedColValues = {};
+    numFilters = { rate: null };
+    $('app').classList.add('hide');
+    $('login').classList.remove('hide');
+    $('upw').value = '';
+    lmsg('You are logged out.','ok');
+  }
+
+  /* ---------- router ---------- */
+  function go(p){
+    if(!Pages[p]){ toast('Page "'+p+'" is not loaded'); return; }
+    S.page = p;
+    document.querySelectorAll('.nav[data-p]').forEach(function(n){ n.classList.toggle('on', n.dataset.p === p); });
+    document.querySelectorAll('.page').forEach(function(el){ el.classList.toggle('on', el.id === 'page-'+p); });
+    $('ttl').textContent = Pages[p].title;
+    Pages[p].render($('page-'+p));
+    window.scrollTo(0,0);
+  }
+  function rerender(){ if(Pages[S.page]) Pages[S.page].render($('page-'+S.page)); }
+    /* ---------- SERVER FILTER BUILDER ---------- */
+  function buildServerFilters() {
+    return {
+      q: S.q || '',
+      cat:  (S.f.cat  && S.f.cat.__set)  ? S.f.cat.__set  : null,
+      code: (S.f.code && S.f.code.__set) ? S.f.code.__set : null,
+      name: (S.f.name && S.f.name.__set) ? S.f.name.__set : null,
+      sku:  (S.f.sku  && S.f.sku.__set)  ? S.f.sku.__set  : null,
+      rate: numFilters.rate || null
+    };
+  }
+
+
+  /* ---------- IMS pagination (server-side filters) ---------- */
+  function loadIMSPage(page){
+    S.imsPage = page || 1;
+    document.querySelectorAll('.sync').forEach(function(el){ el.classList.add('busy'); });
+
+    // // build server-side filter payload from current selection
+    // var filters = {
+    //   q: S.q || '',
+    //   cat:  (S.f.cat  && S.f.cat.__set)  ? S.f.cat.__set  : null,
+    //   code: (S.f.code && S.f.code.__set) ? S.f.code.__set : null,
+    //   name: (S.f.name && S.f.name.__set) ? S.f.name.__set : null,
+    //   sku:  (S.f.sku  && S.f.sku.__set)  ? S.f.sku.__set  : null
+    // };
+
+    google.script.run
+      .withSuccessHandler(function(r){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        if (!r || !r.ok) { toast('Could not load page'); return; }
+        S.ims = r;
+        lastRefreshAt = Date.now();
+        updateRefreshLabel();
+        if (S.page === 'ims' || S.page === 'dashboard') rerender();
+      })
+      .withFailureHandler(function(e){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        toast(e.message || 'Load failed');
+        var el = document.getElementById('page-'+S.page);
+        if (el) el.innerHTML = '<div class="empty"><b>Could not load</b>' + esc(e.message || '') + '</div>';
+      })
+           .getIMSPage(S.token, S.imsPage, 100, null, buildServerFilters());
+  }
+
+  function gotoPage(p){
+    if (!S.ims) return;
+    p = Math.max(1, Math.min(S.ims.pages || 1, num(p)));
+    if (p === S.imsPage) return;
+    loadIMSPage(p);
+    window.scrollTo(0, 0);
+  }
+
+  function needIMS(el){
+    if(S.ims && S.ims.items) return true;
+    el.innerHTML = '<div class="loading">Opening your data…</div>';
+    return false;
+  }
+
+  function noAccess(){
+    return '<div class="panel"><div class="empty"><b>IMS access is off for your ID</b>Ask the admin to set IMS DIST = YES in the master sheet.</div></div>';
+  }
+
+  /* ---------- filters (string + set based) ---------- */
+  function setF(k,v){ S.f[k] = v.toLowerCase(); loadIMSPage(1); }
+
+  function applyFilters(list){
+    return list.filter(function (i) {
+      if (S.q && (i.name + ' ' + i.code + ' ' + i.sku + ' ' + i.cat).toLowerCase().indexOf(S.q) === -1) return false;
+
+      var cols = ['cat', 'code', 'name', 'sku'];
+      for (var k = 0; k < cols.length; k++) {
+        var col = cols[k];
+        var f = S.f[col];
+        if (!f) continue;
+        if (typeof f === 'object' && f.__set) {
+          var val = String(i[col] || '');
+          if (!f.__set[val]) return false;
+        } else if (typeof f === 'string') {
+          if (String(i[col] || '').toLowerCase().indexOf(f) === -1) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function fin(k,ph){ return '<input class="fin" data-f="'+k+'" placeholder="'+ph+'" value="'+esc(S.f[k])+'" oninput="setF(\''+k+'\',this.value)">'; }
+
+  function keepFocus(){
+    var ae = document.activeElement;
+    var sel = ae && ae.id === 'q' ? '#q' : (ae && ae.dataset && ae.dataset.f ? '.fin[data-f="'+ae.dataset.f+'"]' : null);
+    if (!sel) {
+      var any = S.q ? '#q' : null;
+      for (var k in S.f) if (typeof S.f[k] === 'string' && S.f[k]) any = '.fin[data-f="'+k+'"]';
+      sel = any;
+    }
+    var el = sel && document.querySelector(sel);
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }
+
+  /* ========== COLUMN SEARCH (multi-select, values from server) ========== */
+  function openColSearch(evt, colKey) {
+    evt.stopPropagation();
+    var btn = evt.currentTarget;
+    var th  = btn.closest('th');
+
+    var existing = document.getElementById('colSearchPop');
+    if (existing && existing.dataset.colKey === colKey) { existing.remove(); return; }
+    if (existing) existing.remove();
+
+    var pop = document.createElement('div');
+    pop.className = 'col-search-pop';
+    pop.id = 'colSearchPop';
+    pop.dataset.colKey = colKey;
+
+    pop.innerHTML =
+      '<input class="col-search-input" id="colSearchInput" placeholder="Search..." autofocus>' +
+      '<div class="col-search-list" id="colSearchList"><div class="col-search-empty">Loading…</div></div>';
+
+    th.style.position = 'relative';
+    th.appendChild(pop);
+
+    if (colValuesCache[colKey]) {
+      renderColSearchList(colKey);
+    } else {
+      google.script.run
+        .withSuccessHandler(function (r) {
+          colValuesCache[colKey] = (r && r.values) ? r.values : [];
+          renderColSearchList(colKey);
+        })
+        .withFailureHandler(function () {
+          colValuesCache[colKey] = [];
+          renderColSearchList(colKey);
+        })
+        .getColValues(S.token, colKey);
+    }
+
+    setTimeout(function () {
+      var inp = document.getElementById('colSearchInput');
+      if (inp) {
+        inp.addEventListener('input', function () {
+          renderColSearchList(colKey, this.value);
+        });
+      }
+    }, 0);
+
+    setTimeout(function () {
+      document.addEventListener('click', closeColSearchOnOutside);
+    }, 0);
+  }
+
+  function renderColSearchList(colKey, query) {
+    var listEl = document.getElementById('colSearchList');
+    if (!listEl) return;
+    var all = colValuesCache[colKey] || [];
+    var q = (query || '').toLowerCase();
+    var sel = selectedColValues[colKey] || {};
+
+    var filtered = q ? all.filter(function (v) { return v.toLowerCase().indexOf(q) > -1; }) : all;
+
+    if (!filtered.length) {
+      listEl.innerHTML = '<div class="col-search-empty">No matches</div>';
+      return;
+    }
+
+    var html = '';
+    filtered.slice(0, 500).forEach(function (v) {
+      var isSel = !!sel[v];
+      html += '<div class="col-search-item' + (isSel ? ' selected' : '') + '" ' +
+              'data-val="' + esc(v) + '" ' +
+              'onclick="toggleColValue(\'' + colKey + '\', this.dataset.val)">' +
+              '<span class="cs-label">' + esc(v) + '</span>' +
+              (isSel ? '<span class="cs-tick">✓</span>' : '') +
+              '</div>';
+    });
+    listEl.innerHTML = html;
+  }
+
+  /* escape helper for querySelector */
+  function cssEsc(s){ return String(s).replace(/([^\w-])/g, '\\$1'); }
+
+  function toggleColValue(colKey, val) {
+    if (!selectedColValues[colKey]) selectedColValues[colKey] = {};
+    if (selectedColValues[colKey][val]) {
+      delete selectedColValues[colKey][val];
+    } else {
+      selectedColValues[colKey][val] = true;
+    }
+
+    // update tick in popup (WITHOUT re-fetching list)
+    var itemEl = document.querySelector('.col-search-item[data-val="' + cssEsc(val) + '"]');
+    if (itemEl) {
+      var sel = selectedColValues[colKey] || {};
+      if (sel[val]) {
+        itemEl.classList.add('selected');
+        if (!itemEl.querySelector('.cs-tick')) {
+          var tick = document.createElement('span');
+          tick.className = 'cs-tick';
+          tick.textContent = '✓';
+          itemEl.appendChild(tick);
+        }
+      } else {
+        itemEl.classList.remove('selected');
+        var t = itemEl.querySelector('.cs-tick');
+        if (t) t.remove();
+      }
+    }
+
+    // update badge on th
+    updateColBadge(colKey);
+
+    // apply filter to server
+    applyColFilters();
+  }
+
+  function updateColBadge(colKey) {
+    var th = document.querySelector('th[data-col-key="' + colKey + '"]');
+    if (!th) return;
+
+    var old = th.querySelector('.col-count');
+    if (old) old.remove();
+
+    var sel = selectedColValues[colKey] || {};
+    var count = Object.keys(sel).length;
+    if (count === 0) return;
+
+    var badge = document.createElement('span');
+    badge.className = 'col-count';
+    badge.textContent = '+' + count;
+
+    var searchBtn = th.querySelector('.col-search');
+    if (searchBtn) {
+      th.insertBefore(badge, searchBtn);
+    } else {
+      th.appendChild(badge);
+    }
+  }
+
+  function buildFilterValue(colKey) {
+    var sel = selectedColValues[colKey] || {};
+    var keys = Object.keys(sel);
+    return keys.length ? { __set: sel } : '';
+  }
+
+  /* ========== APPLY COLUMN FILTERS (SERVER-SIDE) ========== */
+  function applyColFilters() {
+    // 1. push selected values into S.f as sets
+    S.f.cat  = buildFilterValue('cat');
+    S.f.code = buildFilterValue('code');
+    S.f.name = buildFilterValue('name');
+    S.f.sku  = buildFilterValue('sku');
+
+    // 2. reset to page 1 — new filter means new result set
+    S.imsPage = 1;
+
+    // 3. save popup state
+    var popup = document.getElementById('colSearchPop');
+    var popupColKey = popup ? popup.dataset.colKey : null;
+    var popupInputVal = document.getElementById('colSearchInput') ? document.getElementById('colSearchInput').value : '';
+
+    // 4. ask server for filtered page 1
+    document.querySelectorAll('.sync').forEach(function(el){ el.classList.add('busy'); });
+    google.script.run
+      .withSuccessHandler(function(r){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        if (!r || !r.ok) { toast('Could not filter'); return; }
+        S.ims = r;
+        lastRefreshAt = Date.now();
+        updateRefreshLabel();
+        rerender();
+
+        // re-attach popup to the same column
+        if (popupColKey) {
+          var th = document.querySelector('th[data-col-key="' + popupColKey + '"]');
+          if (th) {
+            var pop = document.createElement('div');
+            pop.className = 'col-search-pop';
+            pop.id = 'colSearchPop';
+            pop.dataset.colKey = popupColKey;
+            pop.innerHTML =
+              '<input class="col-search-input" id="colSearchInput" placeholder="Search..." value="' + esc(popupInputVal) + '">' +
+              '<div class="col-search-list" id="colSearchList"></div>';
+            th.style.position = 'relative';
+            th.appendChild(pop);
+            renderColSearchList(popupColKey, popupInputVal);
+            setTimeout(function(){
+              var inp = document.getElementById('colSearchInput');
+              if (inp) {
+                inp.focus();
+                inp.setSelectionRange(inp.value.length, inp.value.length);
+                inp.addEventListener('input', function () {
+                  renderColSearchList(popupColKey, this.value);
+                });
+              }
+            }, 0);
+          }
+        }
+
+        // restore badges
+        ['cat','code','name','sku'].forEach(function(k){ updateColBadge(k); });
+      })
+      .withFailureHandler(function(e){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        toast(e.message || 'Filter failed');
+      })
+            .getIMSPage(S.token, 1, 100, null, buildServerFilters());
+  }
+
+  function closeColSearchOnOutside(e) {
+    var pop = document.getElementById('colSearchPop');
+    if (!pop) return;
+    if (pop.contains(e.target)) return;
+    if (e.target.closest('.col-search')) return;
+    pop.remove();
+    document.removeEventListener('click', closeColSearchOnOutside);
+  }
+    /* ========== NUMERIC COLUMN SEARCH (RATE) ========== */
+  function openNumSearch(evt, colKey) {
+    evt.stopPropagation();
+    var btn = evt.currentTarget;
+    var th  = btn.closest('th');
+
+    var existing = document.getElementById('colSearchPop');
+    if (existing && existing.dataset.colKey === colKey) { existing.remove(); return; }
+    if (existing) existing.remove();
+
+    var pop = document.createElement('div');
+    pop.className = 'col-search-pop num-pop';
+    pop.id = 'colSearchPop';
+    pop.dataset.colKey = colKey;
+
+    var cur = numFilters[colKey] || null;
+
+    if (cur) {
+      pop.innerHTML = buildNumActiveUI(colKey, cur);
+    } else {
+      pop.innerHTML =
+        '<div class="num-options">' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'eq\')">EQUAL TO</div>' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'gt\')">GREATER THAN</div>' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'lt\')">LESS THAN</div>' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'bt\')">BETWEEN</div>' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'blank\')">BLANK</div>' +
+          '<div class="num-opt" onclick="chooseNumOp(\'' + colKey + '\',\'nblank\')">NON BLANK</div>' +
+        '</div>';
+    }
+
+    th.style.position = 'relative';
+    th.appendChild(pop);
+
+    setTimeout(function () {
+      document.addEventListener('click', closeColSearchOnOutside);
+    }, 0);
+  }
+
+  function buildNumActiveUI(colKey, cur) {
+    var labelMap = { eq: 'EQUAL TO', gt: 'GREATER THAN', lt: 'LESS THAN', bt: 'BETWEEN', blank: 'BLANK', nblank: 'NON BLANK' };
+    var html = '<div class="num-active">';
+    html += '<div class="num-active-head"><span>' + labelMap[cur.op] + '</span>' +
+            '<button class="num-x" onclick="clearNumFilter(\'' + colKey + '\')">✕</button></div>';
+
+    if (cur.op === 'eq' || cur.op === 'gt' || cur.op === 'lt') {
+      html += '<div class="num-inputs"><input class="num-input" id="numV1" type="number" placeholder="Value" value="' + (cur.v1 != null ? cur.v1 : '') + '" oninput="updateNumFilter(\'' + colKey + '\')"></div>';
+    } else if (cur.op === 'bt') {
+      html += '<div class="num-inputs two">' +
+                '<input class="num-input" id="numV1" type="number" placeholder="Min" value="' + (cur.v1 != null ? cur.v1 : '') + '" oninput="updateNumFilter(\'' + colKey + '\')">' +
+                '<input class="num-input" id="numV2" type="number" placeholder="Max" value="' + (cur.v2 != null ? cur.v2 : '') + '" oninput="updateNumFilter(\'' + colKey + '\')">' +
+              '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function chooseNumOp(colKey, op) {
+    numFilters[colKey] = { op: op, v1: null, v2: null };
+    var pop = document.getElementById('colSearchPop');
+    if (pop) pop.innerHTML = buildNumActiveUI(colKey, numFilters[colKey]);
+    updateNumBadge(colKey);
+    setTimeout(function(){
+      var i1 = document.getElementById('numV1');
+      if (i1) i1.focus();
+    }, 0);
+    if (op === 'blank' || op === 'nblank') applyNumFilter(colKey);
+  }
+
+  function updateNumFilter(colKey) {
+    var v1 = document.getElementById('numV1');
+    var v2 = document.getElementById('numV2');
+    var f = numFilters[colKey];
+    if (!f) return;
+    f.v1 = v1 && v1.value !== '' ? Number(v1.value) : null;
+    f.v2 = v2 && v2.value !== '' ? Number(v2.value) : null;
+    applyNumFilter(colKey);
+  }
+
+  function clearNumFilter(colKey) {
+    numFilters[colKey] = null;
+    var pop = document.getElementById('colSearchPop');
+    if (pop) pop.remove();
+    updateNumBadge(colKey);
+    loadIMSPage(1);
+  }
+
+  function updateNumBadge(colKey) {
+    var th = document.querySelector('th[data-col-key="' + colKey + '"]');
+    if (!th) return;
+    var old = th.querySelector('.col-count');
+    if (old) old.remove();
+    var f = numFilters[colKey];
+    if (!f) return;
+    var badge = document.createElement('span');
+    badge.className = 'col-count';
+    var labelMap = { eq: '=', gt: '>', lt: '<', bt: '↔', blank: 'B', nblank: 'NB' };
+    badge.textContent = labelMap[f.op] || '•';
+    var searchBtn = th.querySelector('.col-search');
+    if (searchBtn) th.insertBefore(badge, searchBtn);
+    else th.appendChild(badge);
+  }
+
+  function applyNumFilter(colKey) {
+    var popup = document.getElementById('colSearchPop');
+    var popupColKey = popup ? popup.dataset.colKey : null;
+
+    S.imsPage = 1;
+    document.querySelectorAll('.sync').forEach(function(el){ el.classList.add('busy'); });
+    google.script.run
+      .withSuccessHandler(function(r){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        if (!r || !r.ok) { toast('Could not filter'); return; }
+        S.ims = r;
+        lastRefreshAt = Date.now();
+        updateRefreshLabel();
+        rerender();
+
+        if (popupColKey) {
+          var th = document.querySelector('th[data-col-key="' + popupColKey + '"]');
+          if (th) {
+            var pop = document.createElement('div');
+            pop.className = 'col-search-pop num-pop';
+            pop.id = 'colSearchPop';
+            pop.dataset.colKey = popupColKey;
+            pop.innerHTML = buildNumActiveUI(popupColKey, numFilters[popupColKey] || { op: 'eq' });
+            th.style.position = 'relative';
+            th.appendChild(pop);
+            setTimeout(function(){
+              var i1 = document.getElementById('numV1');
+              if (i1) i1.focus();
+            }, 0);
+          }
+        }
+
+        ['cat','code','name','sku'].forEach(function(k){ updateColBadge(k); });
+        updateNumBadge('rate');
+      })
+      .withFailureHandler(function(e){
+        document.querySelectorAll('.sync').forEach(function(el){ el.classList.remove('busy'); });
+        toast(e.message || 'Filter failed');
+      })
+      .getIMSPage(S.token, 1, 100, null, buildServerFilters());
+  }
+
+
+  /* ========== COLUMN RESIZER ========== */
+  var _resizeState = null;
+
+  function startResize(e, colKey) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    var handle = e.currentTarget;
+    var th = handle.closest('th');
+    var startX = e.clientX;
+    var startW = th.offsetWidth;
+
+    _resizeState = {
+      th: th,
+      colKey: colKey,
+      startX: startX,
+      startW: startW
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', endResize);
+  }
+
+  function onResizeMove(e) {
+    if (!_resizeState) return;
+    var dx = e.clientX - _resizeState.startX;
+    var newW = Math.max(50, _resizeState.startW + dx);
+    _resizeState.th.style.width = newW + 'px';
+    _resizeState.th.style.minWidth = newW + 'px';
+    _resizeState.th.style.maxWidth = newW + 'px';
+  }
+
+  function endResize() {
+    if (!_resizeState) return;
+    saveColumnWidths();
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    _resizeState = null;
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', endResize);
+  }
+
+  function saveColumnWidths() {
+    var table = document.getElementById('imsTable');
+    if (!table) return;
+    var widths = {};
+    table.querySelectorAll('thead tr.ims-hd th').forEach(function (th) {
+      var key = th.dataset.colKey;
+      if (key) widths[key] = th.style.width || th.offsetWidth + 'px';
+    });
+    try { localStorage.setItem('ims_col_widths', JSON.stringify(widths)); } catch(e) {}
+  }
+
+  function restoreColumnWidths() {
+    var table = document.getElementById('imsTable');
+    if (!table) return;
+    var saved;
+    try { saved = JSON.parse(localStorage.getItem('ims_col_widths') || '{}'); } catch(e) { saved = {}; }
+    table.querySelectorAll('thead tr.ims-hd th').forEach(function (th) {
+      var key = th.dataset.colKey;
+      if (key && saved[key]) {
+        th.style.width = saved[key];
+        th.style.minWidth = saved[key];
+        th.style.maxWidth = saved[key];
+      }
+    });
+  }
+</script>
