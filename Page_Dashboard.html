@@ -1,0 +1,110 @@
+<!-- PAGE: Dashboard — welcome + quick stats + link to full IMS.
+     Uses only the slim fields (cat, code, name, sku, rate) now served by IMS.gs. -->
+<section class="page" id="page-dashboard"></section>
+<script>
+Pages.dashboard = {
+  title: 'Dashboard',
+  render: function (el) {
+    if (!needIMS(el)) return;
+    if (!S.ims.allowed) { el.innerHTML = noAccess(); return; }
+
+    var items = S.ims.items || [];
+    var m = S.ims.meta || {};
+
+    // unique categories
+    var catMap = {};
+    items.forEach(function (i) { if (i.cat) catMap[i.cat] = 1; });
+    var catCount = Object.keys(catMap).length;
+
+    // unique SKUs (sub-items)
+    var skuMap = {};
+    items.forEach(function (i) { if (i.sku) skuMap[i.sku] = 1; });
+    var skuCount = Object.keys(skuMap).length;
+
+    // recent items (first 8) for a quick peek
+    var preview = items.slice(0, 8);
+
+    var today = new Date();
+    var todayStr = today.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    var h =
+      '<div class="pagehead">' +
+        '<p>Welcome back, <b>' + esc(S.user.name) + '</b>. Here is your catalogue at a glance.</p>' +
+        '<span class="sync"><i></i>Synced ' + esc(S.ims.synced) + '</span>' +
+      '</div>' +
+
+      '<div class="stats">' +
+        '<div class="stat">' +
+          '<div class="l">Items</div>' +
+          '<div class="v">' + items.length + '</div>' +
+        '</div>' +
+        '<div class="stat g">' +
+          '<div class="l">Categories</div>' +
+          '<div class="v">' + catCount + '</div>' +
+        '</div>' +
+        '<div class="stat a">' +
+          '<div class="l">SKUs</div>' +
+          '<div class="v">' + skuCount + '</div>' +
+        '</div>' +
+        '<div class="stat r">' +
+          '<div class="l">Party</div>' +
+          '<div class="v" style="font-size:1.1rem;letter-spacing:0;margin-top:.6rem">' +
+            esc(S.user.party || S.user.name || S.user.id) +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="panel">' +
+        '<div class="ph">' +
+          '<h3>Quick peek <span class="tag b">' + preview.length + ' of ' + items.length + '</span></h3>' +
+          '<div class="tools">' +
+            '<button class="chip" onclick="go(\'ims\')">Open full IMS →</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tw"><table style="min-width:0"><thead>' +
+          '<tr>' +
+            '<th>Category</th>' +
+            '<th>Item code</th>' +
+            '<th>Item name</th>' +
+            '<th>SKU</th>' +
+            '<th class="num">Rate</th>' +
+          '</tr>' +
+        '</thead><tbody>';
+
+    if (!preview.length) {
+      h += '<tr><td colspan="5"><div class="empty"><b>No items yet</b>' +
+           'Your party name was not found on the DISTRIBUTOR CLOSING BALANCE tab.</div></td></tr>';
+    }
+
+    preview.forEach(function (i) {
+      h += '<tr>' +
+        '<td>' + esc(i.cat) + '</td>' +
+        '<td class="code">' + esc(i.code) + '</td>' +
+        '<td><b>' + esc(i.name) + '</b></td>' +
+        '<td>' + esc(i.sku) + '</td>' +
+        '<td class="num">' + (i.rateRaw === '' ? '—' : '₹' + fmt(i.rate)) + '</td>' +
+      '</tr>';
+    });
+
+    h += '</tbody></table></div></div>' +
+
+      '<div class="panel">' +
+        '<div class="ph"><h3>Session</h3></div>' +
+        '<div class="row">' +
+          '<div><b>User ID</b><p>' + esc(S.user.id) + '</p></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><b>Role</b><p>' + esc(S.user.role) + '</p></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><b>IMS access</b><p>' + (S.user.ims ? 'Enabled' : 'Disabled') + '</p></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><b>Today</b><p>' + todayStr + '</p></div>' +
+        '</div>' +
+      '</div>';
+
+    el.innerHTML = h;
+  }
+};
+</script>
